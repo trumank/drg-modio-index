@@ -14,7 +14,7 @@ use anyhow::Result;
 use u4pak::Pak;
 
 use std::io::Read;
-
+use std::path::Path;
 use std::fs;
 
 use indicatif::ProgressBar;
@@ -37,7 +37,7 @@ enum Commands {
     UpdateModFilesLocal,
     ListFiles {
         #[clap(value_parser)]
-        zip: Option<String>
+        zip: Option<std::path::PathBuf>
     },
     Test,
 }
@@ -65,12 +65,12 @@ async fn main() -> Result<()> {
             } else {
                 let paths = fs::read_dir("mods").unwrap();
 
-                for path in paths {
-                    let path_str = path.unwrap().path().to_str().unwrap().to_owned();
-                    match list_zip_files(&path_str) {
+                for dir_entry in paths {
+                    let path = &dir_entry?.path();
+                    match list_zip_files(&path) {
                         Ok(files) => {
                             for file in files {
-                                println!("{} {}", path_str, file);
+                                println!("{} {}", path.display(), file);
                             }
                         },
                         Err(e) => {
@@ -88,8 +88,8 @@ async fn main() -> Result<()> {
 }
 
 
-fn list_zip_files(fname: &str) -> Result<Vec<String>, PakError> {
-    let file = std::fs::File::open(&fname).unwrap();
+fn list_zip_files(path: &Path) -> Result<Vec<String>, PakError> {
+    let file = std::fs::File::open(path).unwrap();
     let reader = std::io::BufReader::new(file);
 
     let mut archive = zip::ZipArchive::new(reader)?;
@@ -211,7 +211,7 @@ async fn update_mod(bar: &ProgressBar, pool: &SqlitePool, modio: &Modio, m: modi
         .await?;
 
     if let Some(file) = m.modfile {
-        let path = format!("mods/{}.zip", file.filehash.md5);
+        let path = Path::new("mods").join(format!("{}.zip", file.filehash.md5));
 
         let id_modfile = file.id;
         let date = chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(file.date_added.try_into().unwrap(), 0), chrono::Utc).to_rfc3339();
@@ -321,7 +321,7 @@ async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
 
 async fn update_pack_file_local(pool: SqlitePool, id: i64, md5: String) -> Result<()> {
     let mut tx = pool.begin().await?;
-    let path = format!("mods/{}.zip", md5);
+    let path = Path::new("mods").join(format!("{}.zip", md5));
 
     sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id).execute(&mut tx).await?;
 
@@ -372,7 +372,7 @@ struct PackFile {
 }
 
 fn get_pack_files(id_modfile: i64, md5: String) -> Result<(i64, Vec<PackFile>)> {
-    let path = format!("mods/{}.zip", md5);
+    let path = Path::new("mods").join(format!("{}.zip", md5));
 
     let files = list_zip_files(&path)?;
     Ok((id_modfile, files.into_iter().map(|path| {
