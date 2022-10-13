@@ -419,6 +419,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
+name = "drg-modio-index"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap 3.2.5",
+ "dotenv",
+ "futures",
+ "indicatif",
+ "modio",
+ "sqlx",
+ "tokio",
+ "u4pak",
+ "zip",
+]
+
+[[package]]
 name = "either"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -999,23 +1016,6 @@ dependencies = [
  "tokio-util 0.7.3",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "modio-directory"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap 3.2.5",
- "dotenv",
- "futures",
- "indicatif",
- "modio",
- "sqlx",
- "tokio",
- "u4pak",
- "zip",
 ]
 
 [[package]]
