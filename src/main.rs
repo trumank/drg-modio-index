@@ -210,51 +210,57 @@ async fn update_mod(bar: &ProgressBar, pool: &SqlitePool, modio: &Modio, m: modi
         .execute(&mut tx)
         .await?;
 
-    if let Some(file) = m.modfile {
-        let path = Path::new("mods").join(format!("{}.zip", file.filehash.md5));
+    let modfile = sqlx::query!("SELECT id_modfile FROM mod WHERE id_mod = ?", m.id).fetch_one(&mut tx).await?.id_modfile.map(|id| id as u32);
 
-        let id_modfile = file.id;
-        let date = chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(file.date_added.try_into().unwrap(), 0), chrono::Utc).to_rfc3339();
-        sqlx::query!("INSERT INTO modfile(id_modfile, id_mod, date_added, hash_md5, filename, version, changelog)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                     ON CONFLICT(id_modfile) DO
-                        UPDATE SET
-                            id_modfile = excluded.id_modfile,
-                            id_mod = excluded.id_mod,
-                            date_added = excluded.date_added,
-                            hash_md5 = excluded.hash_md5,
-                            filename = excluded.filename,
-                            version = excluded.version,
-                            changelog = excluded.changelog;", id_modfile, m.id, date, file.filehash.md5, file.filename, file.version, file.changelog).execute(&mut tx).await?;
+    if m.modfile.as_ref().map(|f| f.id) != modfile {
+        if let Some(file) = m.modfile {
+            let path = Path::new("mods").join(format!("{}.zip", file.filehash.md5));
 
-        sqlx::query!("UPDATE mod SET id_modfile = ? WHERE id_mod = ?", id_modfile, m.id).execute(&mut tx).await?;
+            let id_modfile = file.id;
+            let date = chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(file.date_added.try_into().unwrap(), 0), chrono::Utc).to_rfc3339();
+            sqlx::query!("INSERT INTO modfile(id_modfile, id_mod, date_added, hash_md5, filename, version, changelog)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)
+                         ON CONFLICT(id_modfile) DO
+                            UPDATE SET
+                                id_modfile = excluded.id_modfile,
+                                id_mod = excluded.id_mod,
+                                date_added = excluded.date_added,
+                                hash_md5 = excluded.hash_md5,
+                                filename = excluded.filename,
+                                version = excluded.version,
+                                changelog = excluded.changelog;", id_modfile, m.id, date, file.filehash.md5, file.filename, file.version, file.changelog).execute(&mut tx).await?;
 
-        if !std::path::Path::new(&path).exists() {
-            bar.println(format!("Downloading mod {}", m.id));
-            modio.download(DownloadAction::FileObj(Box::new(file))).save_to_file(&path).await?;
-        }
+            sqlx::query!("UPDATE mod SET id_modfile = ? WHERE id_mod = ?", id_modfile, m.id).execute(&mut tx).await?;
 
-        sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id_modfile).execute(&mut tx).await?;
-
-        let res = list_zip_files(&path);
-        match res {
-            Ok(files) => {
-                for file in files {
-                    let path = std::path::Path::new(&file);
-                    let extension = path.extension().and_then(std::ffi::OsStr::to_str);
-                    let name = path.file_stem().and_then(std::ffi::OsStr::to_str);
-                    let path_no_extension = if let Some(ext) = extension {
-                        file.strip_suffix(&ext).unwrap()
-                    } else {
-                        &file
-                    };
-                    sqlx::query!("INSERT INTO pack_file(id_modfile, path, path_no_extension, extension, name)
-                                 VALUES (?, ?, ?, ?, ?)", id_modfile, file, path_no_extension, extension, name).execute(&mut tx).await?;
-                }
-            },
-            Err(e) => {
-                bar.println(format!("Error analyzing {}: {}", m.id, e));
+            if !std::path::Path::new(&path).exists() {
+                bar.println(format!("Downloading mod {}", m.id));
+                modio.download(DownloadAction::FileObj(Box::new(file))).save_to_file(&path).await?;
             }
+
+            sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id_modfile).execute(&mut tx).await?;
+
+            let res = list_zip_files(&path);
+            match res {
+                Ok(files) => {
+                    for file in files {
+                        let path = std::path::Path::new(&file);
+                        let extension = path.extension().and_then(std::ffi::OsStr::to_str);
+                        let name = path.file_stem().and_then(std::ffi::OsStr::to_str);
+                        let path_no_extension = if let Some(ext) = extension {
+                            file.strip_suffix(&ext).unwrap()
+                        } else {
+                            &file
+                        };
+                        sqlx::query!("INSERT INTO pack_file(id_modfile, path, path_no_extension, extension, name)
+                                     VALUES (?, ?, ?, ?, ?)", id_modfile, file, path_no_extension, extension, name).execute(&mut tx).await?;
+                    }
+                },
+                Err(e) => {
+                    bar.println(format!("Error analyzing {}: {}", m.id, e));
+                }
+            }
+        } else {
+            sqlx::query!("UPDATE mod SET id_modfile = NULL WHERE id_mod = ?", m.id).execute(&mut tx).await?;
         }
     }
 
