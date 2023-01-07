@@ -68,14 +68,14 @@ async fn main() -> Result<()> {
 
                 for dir_entry in paths {
                     let path = &dir_entry?.path();
-                    match list_zip_files(&path) {
+                    match list_zip_files(path) {
                         Ok(files) => {
                             for file in files {
                                 println!("{} {}", path.display(), file);
                             }
                         },
                         Err(e) => {
-                            println!("{}", e);
+                            println!("{e}");
                         }
                     }
                 }
@@ -97,7 +97,7 @@ fn list_zip_files(path: &Path) -> Result<Vec<String>, PakError> {
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         if file.is_file() && file.name().to_lowercase().ends_with(".pak") {
-            return Ok(list_files(&mut file)?);
+            return list_files(&mut file);
         }
     }
     Err(PakError::MissingPakFile)
@@ -129,13 +129,13 @@ impl std::error::Error for PakError {}
 impl std::fmt::Display for PakError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            PakError::ErrorReadingPak { e } => write!(f, "{:?}: {}", self, e),
+            PakError::ErrorReadingPak { e } => write!(f, "{self:?}: {e}"),
             PakError::MissingMountPoint
-                | PakError::MissingPakFile => write!(f, "{:?}", self),
-            PakError::AssetPathError { mount_point, asset_path } => write!(f, "{:?}: mount point: {:?} asset path: {:?}", self, mount_point, asset_path),
-            PakError::StripPrefixError { e } => write!(f, "{:?}: {}", self, e),
-            PakError::ZipError ( e ) => write!(f, "{:?}: {}", self, e),
-            PakError::IoError ( e ) => write!(f, "{:?}: {}", self, e),
+                | PakError::MissingPakFile => write!(f, "{self:?}"),
+            PakError::AssetPathError { mount_point, asset_path } => write!(f, "{self:?}: mount point: {mount_point:?} asset path: {asset_path:?}"),
+            PakError::StripPrefixError { e } => write!(f, "{self:?}: {e}"),
+            PakError::ZipError ( e ) => write!(f, "{self:?}: {e}"),
+            PakError::IoError ( e ) => write!(f, "{self:?}: {e}"),
         }
     }
 }
@@ -148,7 +148,7 @@ fn list_files(file: &mut zip::read::ZipFile) -> Result<Vec<String>, PakError> {
     let index = pak.index();
     let mount_point = index.mount_point().ok_or(PakError::MissingMountPoint)?;
 
-    let files: Result<Vec<String>, PakError> = pak.index().records().iter().map(|record| -> Result<String, _> {
+    pak.index().records().iter().map(|record| {
         let mut path = std::path::PathBuf::new();
         let asset_path = record.filename();
         path.push(mount_point);
@@ -238,7 +238,7 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
                     .open(&path)
                     .await?;
                 while let Some(bytes) = stream.try_next().await? {
-                    file.write(&bytes).await?;
+                    file.write_all(&bytes).await?;
                     download_bar.inc(bytes.len() as u64);
                 }
 
@@ -310,7 +310,7 @@ async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
                 tx.commit().await?;
             },
             Err(err) => {
-                bar.println(format!("Error analyzing modfile_id {}: {}", id, err));
+                bar.println(format!("Error analyzing modfile_id {id}: {err}"));
             }
         }
         bar.inc(1);
@@ -322,7 +322,7 @@ async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
 
 async fn update_pack_file_local(pool: SqlitePool, id: i64, md5: String) -> Result<()> {
     let mut tx = pool.begin().await?;
-    let path = Path::new("mods").join(format!("{}.zip", md5));
+    let path = Path::new("mods").join(format!("{md5}.zip"));
 
     sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id).execute(&mut tx).await?;
 
@@ -353,13 +353,11 @@ async fn update_pack_file_local(pool: SqlitePool, id: i64, md5: String) -> Resul
             }
         },
         Err(e) => {
-            println!("Error analyzing modfile {}: {}", id, e);
+            println!("Error analyzing modfile {id}: {e}");
         }
     }
 
     tx.commit().await?;
-    //bar.inc(1);
-    println!("{}", id);
 
     Ok(())
 }
@@ -373,7 +371,7 @@ struct PackFile {
 }
 
 fn get_pack_files(id_modfile: i64, md5: String) -> Result<Vec<PackFile>> {
-    let path = Path::new("mods").join(format!("{}.zip", md5));
+    let path = Path::new("mods").join(format!("{md5}.zip"));
 
     let files = list_zip_files(&path)?;
     Ok(files.into_iter().map(|path| {
