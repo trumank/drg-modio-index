@@ -7,8 +7,10 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use clap::{Parser, Subcommand};
 
 use dotenv::dotenv;
+use tokio::io::AsyncWriteExt;
 use std::env;
 use std::future::Future;
+use futures::TryStreamExt;
 use anyhow::Result;
 
 use u4pak::Pak;
@@ -185,17 +187,19 @@ async fn get_mods(pool: &SqlitePool) -> Result<()> {
     let mods = modio.game(drg).mods().search(filter).collect().await?;
     println!("Mod list obtained");
 
-    let bar = ProgressBar::new(mods.len().try_into().unwrap());
+    let multi_bar = indicatif::MultiProgress::new();
+    let mod_bar = multi_bar.add(ProgressBar::new(mods.len().try_into().unwrap()));
     for m in mods {
         //println!("{}. {} {}", m.id, m.name, m.name_id);
-        update_mod(&bar, pool, &modio, m).await?;
+        update_mod(&multi_bar, pool, &modio, m).await?;
+        mod_bar.inc(1);
     }
-    bar.finish();
+    mod_bar.finish();
 
     Ok(())
 }
 
-async fn update_mod(bar: &ProgressBar, pool: &SqlitePool, modio: &Modio, m: modio::mods::Mod) -> Result<()> {
+async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, modio: &Modio, m: modio::mods::Mod) -> Result<()> {
     let mut tx = pool.begin().await?;
 
     //let id_modfile: Option<u32> = m.modfile.as_ref().map(|f| f.id);
@@ -233,8 +237,23 @@ async fn update_mod(bar: &ProgressBar, pool: &SqlitePool, modio: &Modio, m: modi
             sqlx::query!("UPDATE mod SET id_modfile = ? WHERE id_mod = ?", id_modfile, m.id).execute(&mut tx).await?;
 
             if !std::path::Path::new(&path).exists() {
-                bar.println(format!("Downloading mod {}", m.id));
-                modio.download(DownloadAction::FileObj(Box::new(file))).save_to_file(&path).await?;
+                multi_bar.println(format!("Downloading mod {}", m.id));
+                let download_bar = multi_bar.add(indicatif::ProgressBar::new(file.filesize));
+                download_bar.set_style(indicatif::ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")?.progress_chars("#>-"));
+
+                let mut stream = Box::pin(modio.download(DownloadAction::FileObj(Box::new(file))).stream());
+                let mut file = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&path)
+                    .await?;
+                while let Some(bytes) = stream.try_next().await? {
+                    file.write(&bytes).await?;
+                    download_bar.inc(bytes.len() as u64);
+                }
+
+                multi_bar.remove(&download_bar);
             }
 
             sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id_modfile).execute(&mut tx).await?;
@@ -256,7 +275,7 @@ async fn update_mod(bar: &ProgressBar, pool: &SqlitePool, modio: &Modio, m: modi
                     }
                 },
                 Err(e) => {
-                    bar.println(format!("Error analyzing {}: {}", m.id, e));
+                    multi_bar.println(format!("Error analyzing {}: {}", m.id, e));
                 }
             }
         } else {
@@ -265,8 +284,6 @@ async fn update_mod(bar: &ProgressBar, pool: &SqlitePool, modio: &Modio, m: modi
     }
 
     tx.commit().await?;
-
-    bar.inc(1);
     Ok(())
 }
 
