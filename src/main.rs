@@ -1,6 +1,6 @@
-use modio::{Credentials, Modio, filter::Filter};
+use modio::{Credentials, Modio};
 use modio::download::DownloadAction;
-use modio::filter::{Eq, In};
+use modio::filter::In;
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
@@ -9,7 +9,6 @@ use clap::{Parser, Subcommand};
 use dotenv::dotenv;
 use tokio::io::AsyncWriteExt;
 use std::env;
-use std::future::Future;
 use futures::TryStreamExt;
 use anyhow::Result;
 
@@ -91,23 +90,13 @@ async fn main() -> Result<()> {
 
 
 fn list_zip_files(path: &Path) -> Result<Vec<String>, PakError> {
-    let file = std::fs::File::open(path).unwrap();
+    let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);
 
     let mut archive = zip::ZipArchive::new(reader)?;
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).unwrap();
-        let raw_path = file.name().to_owned();
-        let outpath = match file.enclosed_name() {
-            Some(path) => path,
-            None => {
-                println!("Entry {} has a suspicious path", raw_path);
-                continue;
-            }
-        };
-
-        if file.is_file() {
-            //println!("reading {}", outpath.display());
+        let mut file = archive.by_index(i)?;
+        if file.is_file() && file.name().to_lowercase().ends_with(".pak") {
             return Ok(list_files(&mut file)?);
         }
     }
@@ -221,7 +210,7 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
             let path = Path::new("mods").join(format!("{}.zip", file.filehash.md5));
 
             let id_modfile = file.id;
-            let date = chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(file.date_added.try_into().unwrap(), 0), chrono::Utc).to_rfc3339();
+            let date = chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp_opt(file.date_added.try_into().unwrap(), 0).unwrap(), chrono::Utc).to_rfc3339();
             sqlx::query!("INSERT INTO modfile(id_modfile, id_mod, date_added, hash_md5, filename, version, changelog)
                          VALUES (?, ?, ?, ?, ?, ?, ?)
                          ON CONFLICT(id_modfile) DO
@@ -237,7 +226,7 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
             sqlx::query!("UPDATE mod SET id_modfile = ? WHERE id_mod = ?", id_modfile, m.id).execute(&mut tx).await?;
 
             if !std::path::Path::new(&path).exists() {
-                multi_bar.println(format!("Downloading mod {}", m.id));
+                multi_bar.println(format!("Downloading mod {}", m.id))?;
                 let download_bar = multi_bar.add(indicatif::ProgressBar::new(file.filesize));
                 download_bar.set_style(indicatif::ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")?.progress_chars("#>-"));
 
@@ -275,7 +264,7 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
                     }
                 },
                 Err(e) => {
-                    multi_bar.println(format!("Error analyzing {}: {}", m.id, e));
+                    multi_bar.println(format!("Error analyzing {}: {}", m.id, e))?;
                 }
             }
         } else {
@@ -289,28 +278,22 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
 
 async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
     let modfiles = sqlx::query!("SELECT id_modfile, hash_md5 FROM modfile").fetch_all(pool).await?;
-    //let bar = indicatif::ProgressBar::new(modfiles.len().try_into().unwrap());
 
-    use futures::stream::{self, StreamExt, TryBuffered, FuturesUnordered};
-    use tokio::task::JoinHandle;
+    use futures::stream::StreamExt;
 
     let bar = indicatif::ProgressBar::new(modfiles.len().try_into().unwrap());
-    let mut futures: FuturesUnordered<_> = modfiles.into_iter().map(|modfile| {
-        let pool = pool.clone();
-        tokio::task::spawn_blocking(move || {
-            get_pack_files(modfile.id_modfile, modfile.hash_md5)
-        })
-    }).collect();
-
-    //let results: Vec<_> = futures.collect().await;
+    let mut stream = futures::stream::iter(modfiles.into_iter().map(|modfile| {
+        tokio::task::spawn_blocking(move || (modfile.id_modfile, get_pack_files(modfile.id_modfile, modfile.hash_md5)) )
+    })).buffer_unordered(std::thread::available_parallelism()?.get());
 
     use sqlx::{Executor, Statement};
     let delete = pool.prepare("DELETE FROM pack_file WHERE id_modfile = ?").await?;
     let insert = pool.prepare("INSERT INTO pack_file(id_modfile, path, path_no_extension, extension, name) VALUES (?, ?, ?, ?, ?)").await?;
 
-    while let Some(item) = futures.next().await {
-        match item.unwrap() {
-            Ok((id, pack_files)) => {
+    while let Some(item) = stream.next().await {
+        let (id, pack_files) = item?;
+        match pack_files {
+            Ok(pack_files) => {
                 let mut tx = pool.begin().await?;
                 delete.query().bind(id).execute(&mut tx).await?;
                 for file in pack_files {
@@ -327,17 +310,12 @@ async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
                 tx.commit().await?;
             },
             Err(err) => {
-                println!("Error analyzing modfile {}", err);
+                bar.println(format!("Error analyzing modfile_id {}: {}", id, err));
             }
         }
         bar.inc(1);
     }
     bar.finish();
-
-    //futures::future::try_join_all(futures).await?;
-
-    //futures::future::try_join_all(handles).await?;
-    //bar.finish();
 
     Ok(())
 }
@@ -394,11 +372,11 @@ struct PackFile {
     extension: Option<String>,
 }
 
-fn get_pack_files(id_modfile: i64, md5: String) -> Result<(i64, Vec<PackFile>)> {
+fn get_pack_files(id_modfile: i64, md5: String) -> Result<Vec<PackFile>> {
     let path = Path::new("mods").join(format!("{}.zip", md5));
 
     let files = list_zip_files(&path)?;
-    Ok((id_modfile, files.into_iter().map(|path| {
+    Ok(files.into_iter().map(|path| {
         let p = std::path::Path::new(&path);
         let extension = p.extension().and_then(std::ffi::OsStr::to_str).map(|s| s.to_string());
         let name = p.file_stem().and_then(std::ffi::OsStr::to_str).map(|s| s.to_string());
@@ -414,5 +392,5 @@ fn get_pack_files(id_modfile: i64, md5: String) -> Result<(i64, Vec<PackFile>)> 
             name,
             extension,
         }
-    }).collect()))
+    }).collect())
 }
