@@ -64,19 +64,11 @@ async fn main() -> Result<()> {
             if let Some(path) = zip {
                 list_zip_files(&path)?;
             } else {
-                let paths = fs::read_dir("mods").unwrap();
-
-                for dir_entry in paths {
+                for dir_entry in fs::read_dir("mods")? {
                     let path = &dir_entry?.path();
                     match list_zip_files(path) {
-                        Ok(files) => {
-                            for file in files {
-                                println!("{} {}", path.display(), file);
-                            }
-                        },
-                        Err(e) => {
-                            println!("{e}");
-                        }
+                        Ok(files) => for file in files { println!("{} {}", path.display(), file); },
+                        Err(e) => println!("{} {}", path.display(), e)
                     }
                 }
             }
@@ -158,8 +150,7 @@ fn list_files(file: &mut zip::read::ZipFile) -> Result<Vec<String>, PakError> {
             .strip_prefix("../../..").map_err(|e| PakError::StripPrefixError { e })?
             .to_str().ok_or_else(|| PakError::AssetPathError { mount_point: mount_point.to_string(), asset_path: asset_path.to_string() })?;
         Ok(path_str.to_owned())
-    }).collect();
-    Ok(files?)
+    }).collect()
 }
 
 async fn get_mods(pool: &SqlitePool) -> Result<()> {
