@@ -8,7 +8,8 @@ edition = "2021"
 [dependencies]
 tokio = { verison = "1", features = ["full"] }
 anyhow = "1.0.57"
-modio = { git = "https://github.com/trumank/modio-rs.git", branch = "dev" }
+#modio = { git = "https://github.com/trumank/modio-rs.git", branch = "dev", features = ["rustls-tls"] }
+modio = { path = "../modio-rs", features = ["rustls-tls"] }
 dotenv = "0.15.0"
 u4pak = { path = "../rust-u4pak" }
 zip = "0.6.2"
@@ -17,3 +18,6 @@ sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "sqlite"] }
 chrono = "0.4.22"
 indicatif = "0.17.0"
 futures = "0.3.24"
+env_logger = "0.10.0"
+reqwest = { version = "0.11.13" }
+unpak = { git = "https://github.com/trumank/unpak.git", branch = "dev", version = "0.2.0" }

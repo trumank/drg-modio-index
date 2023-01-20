@@ -12,8 +12,6 @@ use std::env;
 use futures::TryStreamExt;
 use anyhow::Result;
 
-use u4pak::Pak;
-
 use std::io::Read;
 use std::path::Path;
 use std::fs;
@@ -97,7 +95,7 @@ fn list_zip_files(path: &Path) -> Result<Vec<String>, PakError> {
 
 #[derive(Debug)]
 enum PakError {
-    ErrorReadingPak { e: u4pak::Error },
+    ErrorReadingPak { e: unpak::Error },
     MissingMountPoint,
     MissingPakFile,
     AssetPathError { mount_point: String, asset_path: String },
@@ -136,19 +134,17 @@ fn list_files(file: &mut zip::read::ZipFile) -> Result<Vec<String>, PakError> {
     let mut buffer: Vec<u8> = vec![];
     file.read_to_end(&mut buffer)?;
     let mut cursor = std::io::Cursor::new(buffer);
-    let pak = Pak::from_reader(&mut cursor, Default::default()).map_err(|e| PakError::ErrorReadingPak {e})?;
-    let index = pak.index();
-    let mount_point = index.mount_point().ok_or(PakError::MissingMountPoint)?;
+    let pak = unpak::PakReader::new_any(&mut cursor, None).map_err(|e| PakError::ErrorReadingPak {e})?;
+    let mount_point = pak.mount_point();
 
-    pak.index().records().iter().map(|record| {
+    pak.files().map(|record| {
         let mut path = std::path::PathBuf::new();
-        let asset_path = record.filename();
         path.push(mount_point);
-        path.push(asset_path);
+        path.push(&record);
         let path_str = path
             .as_path()
             .strip_prefix("../../..").map_err(|e| PakError::StripPrefixError { e })?
-            .to_str().ok_or_else(|| PakError::AssetPathError { mount_point: mount_point.to_string(), asset_path: asset_path.to_string() })?;
+            .to_str().ok_or_else(|| PakError::AssetPathError { mount_point: mount_point.to_string(), asset_path: record.to_string() })?;
         Ok(path_str.to_owned())
     }).collect()
 }
