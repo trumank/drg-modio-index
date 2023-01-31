@@ -1,20 +1,20 @@
-use modio::{Credentials, Modio};
 use modio::download::DownloadAction;
 use modio::filter::In;
+use modio::{Credentials, Modio};
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
 use clap::{Parser, Subcommand};
 
-use dotenv::dotenv;
-use tokio::io::AsyncWriteExt;
-use std::env;
-use futures::TryStreamExt;
 use anyhow::Result;
+use dotenv::dotenv;
+use futures::TryStreamExt;
+use std::env;
+use tokio::io::AsyncWriteExt;
 
+use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::fs;
 
 use indicatif::ProgressBar;
 
@@ -30,13 +30,13 @@ struct Cli {
 enum Commands {
     Search {
         #[clap(value_parser)]
-        name: Option<String>
+        name: Option<String>,
     },
     GetMods,
     UpdateModFilesLocal,
     ListFiles {
         #[clap(value_parser)]
-        zip: Option<std::path::PathBuf>
+        zip: Option<std::path::PathBuf>,
     },
     Test,
 }
@@ -50,14 +50,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Search { name } => {
-        },
+        Commands::Search { name } => {}
         Commands::GetMods => {
             get_mods(&pool).await?;
-        },
+        }
         Commands::UpdateModFilesLocal => {
             update_pack_files_local(&pool).await?;
-        },
+        }
         Commands::ListFiles { zip } => {
             if let Some(path) = zip {
                 list_zip_files(&path)?;
@@ -65,19 +64,21 @@ async fn main() -> Result<()> {
                 for dir_entry in fs::read_dir("mods")? {
                     let path = &dir_entry?.path();
                     match list_zip_files(path) {
-                        Ok(files) => for file in files { println!("{} {}", path.display(), file); },
-                        Err(e) => println!("{} {}", path.display(), e)
+                        Ok(files) => {
+                            for file in files {
+                                println!("{} {}", path.display(), file);
+                            }
+                        }
+                        Err(e) => println!("{} {}", path.display(), e),
                     }
                 }
             }
-        },
-        Commands::Test => {
-        },
+        }
+        Commands::Test => {}
     }
 
     Ok(())
 }
-
 
 fn list_zip_files(path: &Path) -> Result<Vec<String>, PakError> {
     let file = std::fs::File::open(path)?;
@@ -95,11 +96,18 @@ fn list_zip_files(path: &Path) -> Result<Vec<String>, PakError> {
 
 #[derive(Debug)]
 enum PakError {
-    ErrorReadingPak { e: unpak::Error },
+    ErrorReadingPak {
+        e: unpak::Error,
+    },
     MissingMountPoint,
     MissingPakFile,
-    AssetPathError { mount_point: String, asset_path: String },
-    StripPrefixError { e: std::path::StripPrefixError },
+    AssetPathError {
+        mount_point: String,
+        asset_path: String,
+    },
+    StripPrefixError {
+        e: std::path::StripPrefixError,
+    },
     ZipError(zip::result::ZipError),
     IoError(std::io::Error),
 }
@@ -120,12 +128,17 @@ impl std::fmt::Display for PakError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             PakError::ErrorReadingPak { e } => write!(f, "{self:?}: {e}"),
-            PakError::MissingMountPoint
-                | PakError::MissingPakFile => write!(f, "{self:?}"),
-            PakError::AssetPathError { mount_point, asset_path } => write!(f, "{self:?}: mount point: {mount_point:?} asset path: {asset_path:?}"),
+            PakError::MissingMountPoint | PakError::MissingPakFile => write!(f, "{self:?}"),
+            PakError::AssetPathError {
+                mount_point,
+                asset_path,
+            } => write!(
+                f,
+                "{self:?}: mount point: {mount_point:?} asset path: {asset_path:?}"
+            ),
             PakError::StripPrefixError { e } => write!(f, "{self:?}: {e}"),
-            PakError::ZipError ( e ) => write!(f, "{self:?}: {e}"),
-            PakError::IoError ( e ) => write!(f, "{self:?}: {e}"),
+            PakError::ZipError(e) => write!(f, "{self:?}: {e}"),
+            PakError::IoError(e) => write!(f, "{self:?}: {e}"),
         }
     }
 }
@@ -134,25 +147,34 @@ fn list_files(file: &mut zip::read::ZipFile) -> Result<Vec<String>, PakError> {
     let mut buffer: Vec<u8> = vec![];
     file.read_to_end(&mut buffer)?;
     let mut cursor = std::io::Cursor::new(buffer);
-    let pak = unpak::PakReader::new_any(&mut cursor, None).map_err(|e| PakError::ErrorReadingPak {e})?;
+    let pak = unpak::PakReader::new_any(&mut cursor, None)
+        .map_err(|e| PakError::ErrorReadingPak { e })?;
     let mount_point = pak.mount_point();
 
-    pak.files().map(|record| {
-        let mut path = std::path::PathBuf::new();
-        path.push(mount_point);
-        path.push(&record);
-        let path_str = path
-            .as_path()
-            .strip_prefix("../../..").map_err(|e| PakError::StripPrefixError { e })?
-            .to_str().ok_or_else(|| PakError::AssetPathError { mount_point: mount_point.to_string(), asset_path: record.to_string() })?;
-        Ok(path_str.to_owned())
-    }).collect()
+    pak.files()
+        .map(|record| {
+            let mut path = std::path::PathBuf::new();
+            path.push(mount_point);
+            path.push(&record);
+            let path_str = path
+                .as_path()
+                .strip_prefix("../../..")
+                .map_err(|e| PakError::StripPrefixError { e })?
+                .to_str()
+                .ok_or_else(|| PakError::AssetPathError {
+                    mount_point: mount_point.to_string(),
+                    asset_path: record.to_string(),
+                })?;
+            Ok(path_str.to_owned())
+        })
+        .collect()
 }
 
 async fn get_mods(pool: &SqlitePool) -> Result<()> {
-    let modio = Modio::new(
-        Credentials::with_token(&env::var("MODIO_KEY")?, &env::var("MODIO_ACCESS_TOKEN")?),
-    )?;
+    let modio = Modio::new(Credentials::with_token(
+        &env::var("MODIO_KEY")?,
+        &env::var("MODIO_ACCESS_TOKEN")?,
+    ))?;
 
     let drg = 2475;
 
@@ -175,29 +197,50 @@ async fn get_mods(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, modio: &Modio, m: modio::mods::Mod) -> Result<()> {
+async fn update_mod(
+    multi_bar: &indicatif::MultiProgress,
+    pool: &SqlitePool,
+    modio: &Modio,
+    m: modio::mods::Mod,
+) -> Result<()> {
     let mut tx = pool.begin().await?;
 
     //let id_modfile: Option<u32> = m.modfile.as_ref().map(|f| f.id);
-    sqlx::query!("INSERT INTO mod(id_mod, name, name_id, summary, description)
+    sqlx::query!(
+        "INSERT INTO mod(id_mod, name, name_id, summary, description)
                  VALUES (?, ?, ?, ?, ?)
                  ON CONFLICT(id_mod) DO
                     UPDATE SET
                         name = excluded.name,
                         name_id = excluded.name_id,
                         summary = excluded.summary,
-                        description = excluded.summary;", m.id, m.name, m.name_id, m.summary, m.description)
-        .execute(&mut tx)
-        .await?;
+                        description = excluded.summary;",
+        m.id,
+        m.name,
+        m.name_id,
+        m.summary,
+        m.description
+    )
+    .execute(&mut tx)
+    .await?;
 
-    let modfile = sqlx::query!("SELECT id_modfile FROM mod WHERE id_mod = ?", m.id).fetch_one(&mut tx).await?.id_modfile.map(|id| id as u32);
+    let modfile = sqlx::query!("SELECT id_modfile FROM mod WHERE id_mod = ?", m.id)
+        .fetch_one(&mut tx)
+        .await?
+        .id_modfile
+        .map(|id| id as u32);
 
     if m.modfile.as_ref().map(|f| f.id) != modfile {
         if let Some(file) = m.modfile {
             let path = Path::new("mods").join(format!("{}.zip", file.filehash.md5));
 
             let id_modfile = file.id;
-            let date = chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp_opt(file.date_added.try_into().unwrap(), 0).unwrap(), chrono::Utc).to_rfc3339();
+            let date = chrono::DateTime::<chrono::Utc>::from_utc(
+                chrono::NaiveDateTime::from_timestamp_opt(file.date_added.try_into().unwrap(), 0)
+                    .unwrap(),
+                chrono::Utc,
+            )
+            .to_rfc3339();
             sqlx::query!("INSERT INTO modfile(id_modfile, id_mod, date_added, hash_md5, filename, version, changelog)
                          VALUES (?, ?, ?, ?, ?, ?, ?)
                          ON CONFLICT(id_modfile) DO
@@ -210,14 +253,24 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
                                 version = excluded.version,
                                 changelog = excluded.changelog;", id_modfile, m.id, date, file.filehash.md5, file.filename, file.version, file.changelog).execute(&mut tx).await?;
 
-            sqlx::query!("UPDATE mod SET id_modfile = ? WHERE id_mod = ?", id_modfile, m.id).execute(&mut tx).await?;
+            sqlx::query!(
+                "UPDATE mod SET id_modfile = ? WHERE id_mod = ?",
+                id_modfile,
+                m.id
+            )
+            .execute(&mut tx)
+            .await?;
 
             if !std::path::Path::new(&path).exists() {
                 multi_bar.println(format!("Downloading mod {}", m.id))?;
                 let download_bar = multi_bar.add(indicatif::ProgressBar::new(file.filesize));
                 download_bar.set_style(indicatif::ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")?.progress_chars("#>-"));
 
-                let mut stream = Box::pin(modio.download(DownloadAction::FileObj(Box::new(file))).stream());
+                let mut stream = Box::pin(
+                    modio
+                        .download(DownloadAction::FileObj(Box::new(file)))
+                        .stream(),
+                );
                 let mut file = tokio::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
@@ -232,7 +285,9 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
                 multi_bar.remove(&download_bar);
             }
 
-            sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id_modfile).execute(&mut tx).await?;
+            sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id_modfile)
+                .execute(&mut tx)
+                .await?;
 
             let res = list_zip_files(&path);
             match res {
@@ -249,13 +304,15 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
                         sqlx::query!("INSERT INTO pack_file(id_modfile, path, path_no_extension, extension, name)
                                      VALUES (?, ?, ?, ?, ?)", id_modfile, file, path_no_extension, extension, name).execute(&mut tx).await?;
                     }
-                },
+                }
                 Err(e) => {
                     multi_bar.println(format!("Error analyzing {}: {}", m.id, e))?;
                 }
             }
         } else {
-            sqlx::query!("UPDATE mod SET id_modfile = NULL WHERE id_mod = ?", m.id).execute(&mut tx).await?;
+            sqlx::query!("UPDATE mod SET id_modfile = NULL WHERE id_mod = ?", m.id)
+                .execute(&mut tx)
+                .await?;
         }
     }
 
@@ -264,17 +321,27 @@ async fn update_mod(multi_bar: &indicatif::MultiProgress, pool: &SqlitePool, mod
 }
 
 async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
-    let modfiles = sqlx::query!("SELECT id_modfile, hash_md5 FROM modfile").fetch_all(pool).await?;
+    let modfiles = sqlx::query!("SELECT id_modfile, hash_md5 FROM modfile")
+        .fetch_all(pool)
+        .await?;
 
     use futures::stream::StreamExt;
 
     let bar = indicatif::ProgressBar::new(modfiles.len().try_into().unwrap());
     let mut stream = futures::stream::iter(modfiles.into_iter().map(|modfile| {
-        tokio::task::spawn_blocking(move || (modfile.id_modfile, get_pack_files(modfile.id_modfile, modfile.hash_md5)) )
-    })).buffer_unordered(std::thread::available_parallelism()?.get());
+        tokio::task::spawn_blocking(move || {
+            (
+                modfile.id_modfile,
+                get_pack_files(modfile.id_modfile, modfile.hash_md5),
+            )
+        })
+    }))
+    .buffer_unordered(std::thread::available_parallelism()?.get());
 
     use sqlx::{Executor, Statement};
-    let delete = pool.prepare("DELETE FROM pack_file WHERE id_modfile = ?").await?;
+    let delete = pool
+        .prepare("DELETE FROM pack_file WHERE id_modfile = ?")
+        .await?;
     let insert = pool.prepare("INSERT INTO pack_file(id_modfile, path, path_no_extension, extension, name) VALUES (?, ?, ?, ?, ?)").await?;
 
     while let Some(item) = stream.next().await {
@@ -295,7 +362,7 @@ async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
                         .await?;
                 }
                 tx.commit().await?;
-            },
+            }
             Err(err) => {
                 bar.println(format!("Error analyzing modfile_id {id}: {err}"));
             }
@@ -311,7 +378,9 @@ async fn update_pack_file_local(pool: SqlitePool, id: i64, md5: String) -> Resul
     let mut tx = pool.begin().await?;
     let path = Path::new("mods").join(format!("{md5}.zip"));
 
-    sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id).execute(&mut tx).await?;
+    sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id)
+        .execute(&mut tx)
+        .await?;
 
     use sqlx::{Executor, Statement};
 
@@ -336,9 +405,10 @@ async fn update_pack_file_local(pool: SqlitePool, id: i64, md5: String) -> Resul
                     .bind(path_no_extension)
                     .bind(extension)
                     .bind(name)
-                    .execute(&mut tx).await?;
+                    .execute(&mut tx)
+                    .await?;
             }
-        },
+        }
         Err(e) => {
             println!("Error analyzing modfile {id}: {e}");
         }
@@ -361,21 +431,30 @@ fn get_pack_files(id_modfile: i64, md5: String) -> Result<Vec<PackFile>> {
     let path = Path::new("mods").join(format!("{md5}.zip"));
 
     let files = list_zip_files(&path)?;
-    Ok(files.into_iter().map(|path| {
-        let p = std::path::Path::new(&path);
-        let extension = p.extension().and_then(std::ffi::OsStr::to_str).map(|s| s.to_string());
-        let name = p.file_stem().and_then(std::ffi::OsStr::to_str).map(|s| s.to_string());
-        let path_no_extension = if let Some(ext) = &extension {
-            path.strip_suffix(ext).unwrap().to_string()
-        } else {
-            path.to_owned()
-        };
-        PackFile {
-            id_modfile,
-            path,
-            path_no_extension,
-            name,
-            extension,
-        }
-    }).collect())
+    Ok(files
+        .into_iter()
+        .map(|path| {
+            let p = std::path::Path::new(&path);
+            let extension = p
+                .extension()
+                .and_then(std::ffi::OsStr::to_str)
+                .map(|s| s.to_string());
+            let name = p
+                .file_stem()
+                .and_then(std::ffi::OsStr::to_str)
+                .map(|s| s.to_string());
+            let path_no_extension = if let Some(ext) = &extension {
+                path.strip_suffix(ext).unwrap().to_string()
+            } else {
+                path.to_owned()
+            };
+            PackFile {
+                id_modfile,
+                path,
+                path_no_extension,
+                name,
+                extension,
+            }
+        })
+        .collect())
 }
