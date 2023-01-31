@@ -28,10 +28,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Search {
-        #[clap(value_parser)]
-        name: Option<String>,
-    },
     GetMods,
     UpdateModFilesLocal,
     ListFiles {
@@ -50,7 +46,6 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Search { name } => {}
         Commands::GetMods => {
             get_mods(&pool).await?;
         }
@@ -99,7 +94,6 @@ enum PakError {
     ErrorReadingPak {
         e: unpak::Error,
     },
-    MissingMountPoint,
     MissingPakFile,
     AssetPathError {
         mount_point: String,
@@ -128,7 +122,7 @@ impl std::fmt::Display for PakError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             PakError::ErrorReadingPak { e } => write!(f, "{self:?}: {e}"),
-            PakError::MissingMountPoint | PakError::MissingPakFile => write!(f, "{self:?}"),
+            PakError::MissingPakFile => write!(f, "{self:?}"),
             PakError::AssetPathError {
                 mount_point,
                 asset_path,
@@ -370,51 +364,6 @@ async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
         bar.inc(1);
     }
     bar.finish();
-
-    Ok(())
-}
-
-async fn update_pack_file_local(pool: SqlitePool, id: i64, md5: String) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    let path = Path::new("mods").join(format!("{md5}.zip"));
-
-    sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id)
-        .execute(&mut tx)
-        .await?;
-
-    use sqlx::{Executor, Statement};
-
-    let insert = tx.prepare("INSERT INTO pack_file(id_modfile, path, path_no_extension, extension, name) VALUES (?, ?, ?, ?, ?)").await?;
-
-    let res = list_zip_files(&path);
-    match res {
-        Ok(files) => {
-            for file in files {
-                let path = std::path::Path::new(&file);
-                let extension = path.extension().and_then(std::ffi::OsStr::to_str);
-                let name = path.file_stem().and_then(std::ffi::OsStr::to_str);
-                let path_no_extension = if let Some(ext) = extension {
-                    file.strip_suffix(&ext).unwrap()
-                } else {
-                    &file
-                };
-                insert
-                    .query()
-                    .bind(id)
-                    .bind(&file)
-                    .bind(path_no_extension)
-                    .bind(extension)
-                    .bind(name)
-                    .execute(&mut tx)
-                    .await?;
-            }
-        }
-        Err(e) => {
-            println!("Error analyzing modfile {id}: {e}");
-        }
-    }
-
-    tx.commit().await?;
 
     Ok(())
 }
