@@ -6,12 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { verison = "1", features = ["full"] }
+modio = { version = "0.7.1", features = ["rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
 anyhow = "1.0.57"
-#modio = { git = "https://github.com/trumank/modio-rs.git", branch = "dev", features = ["rustls-tls"] }
-modio = { path = "../modio-rs", features = ["rustls-tls"] }
 dotenv = "0.15.0"
-u4pak = { path = "../rust-u4pak" }
 zip = "0.6.2"
 clap = { version = "3.2.5", features = ["derive"] }
 sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "sqlite"] }
@@ -21,3 +19,6 @@ futures = "0.3.24"
 env_logger = "0.10.0"
 reqwest = { version = "0.11.13" }
 unpak = { git = "https://github.com/trumank/unpak.git", branch = "dev", version = "0.2.0" }
+
+[patch.crates-io]
+modio = { git = "https://github.com/trumank/modio-rs.git", branch = "dev" }
