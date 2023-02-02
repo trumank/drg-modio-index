@@ -92,7 +92,7 @@ fn list_zip_files(path: &Path) -> Result<Vec<String>, PakError> {
 #[derive(Debug)]
 enum PakError {
     ErrorReadingPak {
-        e: unpak::Error,
+        e: repak::Error,
     },
     MissingPakFile,
     AssetPathError {
@@ -141,7 +141,7 @@ fn list_files(file: &mut zip::read::ZipFile) -> Result<Vec<String>, PakError> {
     let mut buffer: Vec<u8> = vec![];
     file.read_to_end(&mut buffer)?;
     let mut cursor = std::io::Cursor::new(buffer);
-    let pak = unpak::PakReader::new_any(&mut cursor, None)
+    let pak = repak::PakReader::new_any(&mut cursor, None)
         .map_err(|e| PakError::ErrorReadingPak { e })?;
     let mount_point = pak.mount_point();
 
