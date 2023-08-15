@@ -165,10 +165,12 @@ fn list_files(file: &mut zip::read::ZipFile) -> Result<Vec<String>, PakError> {
 }
 
 async fn get_mods(pool: &SqlitePool) -> Result<()> {
-    let modio = Modio::new(Credentials::with_token(
-        &env::var("MODIO_KEY")?,
-        &env::var("MODIO_ACCESS_TOKEN")?,
-    ))?;
+    let client = reqwest_middleware::ClientBuilder::new(reqwest::Client::new()).build();
+
+    let modio = Modio::new(
+        Credentials::with_token("".to_string(), &env::var("MODIO_ACCESS_TOKEN")?),
+        client,
+    )?;
 
     let drg = 2475;
 
@@ -215,11 +217,11 @@ async fn update_mod(
         m.summary,
         m.description
     )
-    .execute(&mut tx)
+    .execute(&mut *tx)
     .await?;
 
     let modfile = sqlx::query!("SELECT id_modfile FROM mod WHERE id_mod = ?", m.id)
-        .fetch_one(&mut tx)
+        .fetch_one(&mut *tx)
         .await?
         .id_modfile
         .map(|id| id as u32);
@@ -245,14 +247,14 @@ async fn update_mod(
                                 hash_md5 = excluded.hash_md5,
                                 filename = excluded.filename,
                                 version = excluded.version,
-                                changelog = excluded.changelog;", id_modfile, m.id, date, file.filehash.md5, file.filename, file.version, file.changelog).execute(&mut tx).await?;
+                                changelog = excluded.changelog;", id_modfile, m.id, date, file.filehash.md5, file.filename, file.version, file.changelog).execute(&mut *tx).await?;
 
             sqlx::query!(
                 "UPDATE mod SET id_modfile = ? WHERE id_mod = ?",
                 id_modfile,
                 m.id
             )
-            .execute(&mut tx)
+            .execute(&mut *tx)
             .await?;
 
             if !std::path::Path::new(&path).exists() {
@@ -280,7 +282,7 @@ async fn update_mod(
             }
 
             sqlx::query!("DELETE FROM pack_file WHERE id_modfile = ?", id_modfile)
-                .execute(&mut tx)
+                .execute(&mut *tx)
                 .await?;
 
             let res = list_zip_files(&path);
@@ -296,7 +298,7 @@ async fn update_mod(
                             &file
                         };
                         sqlx::query!("INSERT INTO pack_file(id_modfile, path, path_no_extension, extension, name)
-                                     VALUES (?, ?, ?, ?, ?)", id_modfile, file, path_no_extension, extension, name).execute(&mut tx).await?;
+                                     VALUES (?, ?, ?, ?, ?)", id_modfile, file, path_no_extension, extension, name).execute(&mut *tx).await?;
                     }
                 }
                 Err(e) => {
@@ -305,7 +307,7 @@ async fn update_mod(
             }
         } else {
             sqlx::query!("UPDATE mod SET id_modfile = NULL WHERE id_mod = ?", m.id)
-                .execute(&mut tx)
+                .execute(&mut *tx)
                 .await?;
         }
     }
@@ -343,7 +345,7 @@ async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
         match pack_files {
             Ok(pack_files) => {
                 let mut tx = pool.begin().await?;
-                delete.query().bind(id).execute(&mut tx).await?;
+                delete.query().bind(id).execute(&mut *tx).await?;
                 for file in pack_files {
                     insert
                         .query()
@@ -352,7 +354,7 @@ async fn update_pack_files_local(pool: &SqlitePool) -> Result<()> {
                         .bind(file.path_no_extension)
                         .bind(file.extension)
                         .bind(file.name)
-                        .execute(&mut tx)
+                        .execute(&mut *tx)
                         .await?;
                 }
                 tx.commit().await?;
